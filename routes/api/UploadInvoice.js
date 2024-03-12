@@ -209,7 +209,6 @@ router.post("/", async (req, res) => {
           letterErr = "Note";
       }
 
-      console.log("letterErr", letterErr);
       mistakes.push(letterErr);
     }
 
@@ -220,9 +219,7 @@ router.post("/", async (req, res) => {
     sheetArr[arrKey].v = mistakes.join("\n");
   };
 
-  const errorsArray = addErr();
-  console.log("errorsArray", errorsArray);
-  console.log("sheetArr", sheetArr);
+  addErr();
 
   const allCurrencyValue = new Set();
   for (const cellAddress in sheetArr) {
