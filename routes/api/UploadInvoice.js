@@ -92,7 +92,6 @@ router.post("/", async (req, res) => {
     "ValidationErrors",
   ]);
 
-  const errors = [];
   invoices.forEach((rowNumber) => {
     const range = [];
     for (let col = 0; col <= 10; col++) {
@@ -105,8 +104,8 @@ router.post("/", async (req, res) => {
         data[cell] = sheet[cell].v;
       } else {
         data[cell] = null;
-        errors.push(cell);
       }
+
       return data;
     }, {});
     invoicesData.push(Object.values(rowData));
@@ -153,73 +152,6 @@ router.post("/", async (req, res) => {
     }
     return indices;
   }, []);
-
-  const ValidationErrorsColumn = Object.keys(sheetArr).reduce(
-    (indices, key) => {
-      const item = sheetArr[key];
-      if (item.t === "s" && item.v.includes("ValidationErrors")) {
-        const letter = key.charAt(0);
-        indices.push(letter);
-      }
-      return indices;
-    },
-    []
-  );
-
-  const addErr = () => {
-    const mistakes = [];
-    let arrKey;
-    for (let i = 0; i < errors.length; i++) {
-      const keyError = errors[i];
-      const letter = keyError.charAt(0);
-      const number = parseInt(keyError.slice(1), 10);
-      arrKey = ValidationErrorsColumn + number;
-
-      let letterErr = "";
-
-      switch (letter) {
-        case "A":
-          letterErr = "Fill in customer";
-          break;
-        case "B":
-          letterErr = "Fill in cust no";
-          break;
-        case "C":
-          letterErr = "Fill in project type";
-          break;
-        case "D":
-          letterErr = "Fill in quantity";
-          break;
-        case "E":
-          letterErr = "Fill in price per item";
-          break;
-        case "F":
-          letterErr = "Fill in item price currency";
-          break;
-        case "G":
-          letterErr = "Fill in total price";
-          break;
-        case "H":
-          letterErr = "Fill in invoice currency";
-          break;
-        case "I":
-          letterErr = "Fill in status";
-          break;
-        default:
-          letterErr = "Note";
-      }
-
-      mistakes.push(letterErr);
-    }
-
-    if (!sheetArr[arrKey]) {
-      sheetArr[arrKey] = {};
-    }
-
-    sheetArr[arrKey].v = mistakes.join("\n");
-  };
-
-  addErr();
 
   const allCurrencyValue = new Set();
   for (const cellAddress in sheetArr) {
@@ -316,11 +248,124 @@ router.post("/", async (req, res) => {
     });
   });
 
+  const invoicesNew = Object.keys(sheetArr).reduce((indices, key) => {
+    const item = sheetArr[key];
+    if (
+      (item.t === "s" && item.v.includes("Ready")) |
+      (item.t === "s" && item.v.includes("INV"))
+    ) {
+      const number = parseInt(key.slice(1), 10);
+      indices.push(number);
+    }
+    return indices;
+  }, []);
+
+  let invoicesDataNew = [];
+
+  invoicesDataNew.push([
+    "Customer",
+    "Cust No",
+    "Project Type",
+    "Quantity",
+    "Price Per Item",
+    "Item Price Currency",
+    "Total Price",
+    "Invoice Currency",
+    "Status",
+    "",
+    "",
+    "ValidationErrors",
+  ]);
+
+  const ValidationErrorsColumn = Object.keys(sheetArr).reduce(
+    (indices, key) => {
+      const item = sheetArr[key];
+      if (item.t === "s" && item.v.includes("ValidationErrors")) {
+        const letter = key.charAt(0);
+        indices.push(letter);
+      }
+      return indices;
+    },
+    []
+  );
+
+  invoicesNew.forEach((rowNumber) => {
+    const range = [];
+    let mistakes = [];
+    for (let col = 0; col <= 11; col++) {
+      const cell = XLSX.utils.encode_cell({ r: rowNumber - 1, c: col });
+      range.push(cell);
+    }
+    const rowData = range.reduce((data, cell) => {
+      if (sheetArr[cell] && sheetArr[cell].v !== undefined) {
+        data[cell] = sheetArr[cell].v;
+      } else {
+        data[cell] = null;
+        const letter = cell.charAt(0);
+
+        let letterErr = "";
+        switch (letter) {
+          case "A":
+            letterErr = "Fill in customer";
+            break;
+          case "B":
+            letterErr = "Fill in cust no";
+            break;
+          case "C":
+            letterErr = "Fill in project type";
+            break;
+          case "D":
+            letterErr = "Fill in quantity";
+            break;
+          case "E":
+            letterErr = "Fill in price per item";
+            break;
+          case "F":
+            letterErr = "Fill in item price currency";
+            break;
+          case "G":
+            letterErr = "Fill in total price";
+            break;
+          case "H":
+            letterErr = "Fill in invoice currency";
+            break;
+          case "I":
+            letterErr = "Fill in status";
+            break;
+          default:
+            letterErr = null;
+        }
+
+        if (letterErr !== null) {
+          mistakes.push(letterErr);
+        }
+      }
+
+      const number = parseInt(cell.slice(1), 10);
+      const key = ValidationErrorsColumn + number;
+      sheetArr[key] = { v: mistakes.join(", ") };
+      return data;
+    }, {});
+
+    invoicesDataNew.push(Object.values(rowData));
+  });
+
+  const workbookNew = XLSX.utils.book_new();
+  const newSheetNameNew = "ProcessedDataNew";
+  const wsNew = XLSX.utils.aoa_to_sheet(invoicesDataNew);
+  XLSX.utils.book_append_sheet(workbookNew, wsNew, newSheetNameNew);
+
+  XLSX.writeFile(workbookNew, invoiceDir);
+
+  const arrInvoicesReadNew = XLSX.readFile(invoiceDir);
+  const sheetNameArrNew = arrInvoicesReadNew.SheetNames[0];
+  const sheetArrNew = arrInvoicesReadNew.Sheets[sheetNameArrNew];
+
   const result = `<pre>${JSON.stringify(
     {
       InvoicingMonth: dates[0].v,
       currencyRates: convertToCurrencyRates(ratesArr),
-      invoicesData: [XLSX.utils.sheet_to_html(sheetArr)],
+      invoicesData: [XLSX.utils.sheet_to_html(sheetArrNew)],
       GeneralTotalPrice: convertToCurrencyRates(modifiedValueConvert),
     },
     null,
