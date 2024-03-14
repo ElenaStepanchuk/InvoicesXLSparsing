@@ -3,6 +3,11 @@ import XLSX from "xlsx";
 import path from "path";
 import fs from "fs";
 
+import { newDates } from "../../components/dates.js";
+import { convertToCurrencyRates } from "../../helpers/convertCurrencyRates.js";
+import { currencyRates } from "../../components/currencyRates.js";
+import { findColumnByName } from "../../helpers/findColumnByName.js";
+
 const router = express.Router();
 
 router.post("/", async (req, res) => {
@@ -15,54 +20,9 @@ router.post("/", async (req, res) => {
   const sheetName = invoiceRead.SheetNames[0];
   const sheet = invoiceRead.Sheets[sheetName];
 
-  const dateRegex = new RegExp(
-    "^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s\\d{4}$|^\\d{4}-\\d{2}$"
-  );
+  const dates = newDates(sheet, invoicingMonth);
 
-  const dates = Object.values(sheet).filter((item) => {
-    if (typeof item.v === "string" && dateRegex.test(item.v)) {
-      item.v = invoicingMonth;
-      item.r = `<t>${invoicingMonth}</t>`;
-      item.h = invoicingMonth;
-      item.w = invoicingMonth;
-      return true;
-    }
-    return false;
-  });
-
-  const ratesKeys = Object.keys(sheet).reduce((indices, key) => {
-    const item = sheet[key];
-    if (item.t === "s" && item.v.includes("Rate")) {
-      indices.push(key);
-      const letter = key.charAt(0);
-      const number = parseInt(key.slice(1), 10);
-
-      const unicode = letter.charCodeAt(0) + 1;
-      const nextLetter = String.fromCharCode(unicode);
-      const newKey = nextLetter + number;
-      indices.push(newKey);
-    }
-    return indices;
-  }, []);
-
-  const ratesArr = [];
-  const ratesObject = () => {
-    for (let i = 0; i < ratesKeys.length; i++) {
-      ratesArr.push(sheet[ratesKeys[i]].v);
-    }
-    return ratesArr;
-  };
-  ratesObject();
-
-  const convertToCurrencyRates = (arr) => {
-    const result = {};
-    for (let i = 0; i < arr.length; i += 2) {
-      const currency = arr[i].replace(" Rate", "");
-      const rate = arr[i + 1];
-      result[currency] = rate;
-    }
-    return result;
-  };
+  const ratesArr = currencyRates(sheet);
 
   const invoices = Object.keys(sheet).reduce((indices, key) => {
     const item = sheet[key];
@@ -133,25 +93,8 @@ router.post("/", async (req, res) => {
   const sheetNameArr = arrInvoicesRead.SheetNames[0];
   const sheetArr = arrInvoicesRead.Sheets[sheetNameArr];
 
-  const carrencyTotalPriceColumn = Object.keys(sheetArr).reduce(
-    (indices, key) => {
-      const item = sheetArr[key];
-      if (item.t === "s" && item.v.includes("Total Price")) {
-        const letter = key.charAt(0);
-        indices.push(letter);
-      }
-      return indices;
-    },
-    []
-  );
-  const carrencyNameColumn = Object.keys(sheetArr).reduce((indices, key) => {
-    const item = sheetArr[key];
-    if (item.t === "s" && item.v.includes("Invoice Currency")) {
-      const letter = key.charAt(0);
-      indices.push(letter);
-    }
-    return indices;
-  }, []);
+  const carrencyTotalPriceColumn = findColumnByName(sheetArr, "Total Price");
+  const carrencyNameColumn = findColumnByName(sheetArr, "Invoice Currency");
 
   const allCurrencyValue = new Set();
   for (const cellAddress in sheetArr) {
@@ -277,17 +220,7 @@ router.post("/", async (req, res) => {
     "ValidationErrors",
   ]);
 
-  const ValidationErrorsColumn = Object.keys(sheetArr).reduce(
-    (indices, key) => {
-      const item = sheetArr[key];
-      if (item.t === "s" && item.v.includes("ValidationErrors")) {
-        const letter = key.charAt(0);
-        indices.push(letter);
-      }
-      return indices;
-    },
-    []
-  );
+  const validationErrorsColumn = findColumnByName(sheetArr, "ValidationErrors");
 
   invoicesNew.forEach((rowNumber) => {
     const range = [];
@@ -342,7 +275,7 @@ router.post("/", async (req, res) => {
       }
 
       const number = parseInt(cell.slice(1), 10);
-      const key = ValidationErrorsColumn + number;
+      const key = validationErrorsColumn + number;
       sheetArr[key] = { v: mistakes.join(", ") };
       return data;
     }, {});
