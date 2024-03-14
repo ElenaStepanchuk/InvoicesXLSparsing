@@ -3,10 +3,15 @@ import XLSX from "xlsx";
 import path from "path";
 import fs from "fs";
 
-import { newDates } from "../../components/dates.js";
-import { convertToCurrencyRates } from "../../helpers/convertCurrencyRates.js";
+import { newDates } from "../../components/newDates.js";
 import { currencyRates } from "../../components/currencyRates.js";
+import { totalSumsInvoice } from "../../components/totalSumsInvoice.js";
+
+import { convertToCurrencyRates } from "../../helpers/convertCurrencyRates.js";
 import { findColumnByName } from "../../helpers/findColumnByName.js";
+import { createInvoices } from "../../helpers/createInvoices.js";
+import { invoicesHeader } from "../../constants/invoiceHeader.js";
+import { errorsChoice } from "../../helpers/errorsChoice.js";
 
 const router = express.Router();
 
@@ -14,9 +19,7 @@ router.post("/", async (req, res) => {
   const invoicingMonth = req.body.date;
 
   const file = req.file;
-
   const invoiceRead = XLSX.readFile(file.path);
-
   const sheetName = invoiceRead.SheetNames[0];
   const sheet = invoiceRead.Sheets[sheetName];
 
@@ -24,33 +27,10 @@ router.post("/", async (req, res) => {
 
   const ratesArr = currencyRates(sheet);
 
-  const invoices = Object.keys(sheet).reduce((indices, key) => {
-    const item = sheet[key];
-    if (
-      (item.t === "s" && item.v.includes("Ready")) |
-      (item.t === "s" && item.v.includes("INV"))
-    ) {
-      const number = parseInt(key.slice(1), 10);
-      indices.push(number);
-    }
-    return indices;
-  }, []);
+  const invoices = createInvoices(sheet);
 
   let invoicesData = [];
-  invoicesData.push([
-    "Customer",
-    "Cust No",
-    "Project Type",
-    "Quantity",
-    "Price Per Item",
-    "Item Price Currency",
-    "Total Price",
-    "Invoice Currency",
-    "Status",
-    "",
-    "",
-    "ValidationErrors",
-  ]);
+  invoicesData.push(invoicesHeader);
 
   invoices.forEach((rowNumber) => {
     const range = [];
@@ -91,87 +71,30 @@ router.post("/", async (req, res) => {
 
   const arrInvoicesRead = XLSX.readFile(invoiceDir);
   const sheetNameArr = arrInvoicesRead.SheetNames[0];
-  const sheetArr = arrInvoicesRead.Sheets[sheetNameArr];
+  const sheetNew = arrInvoicesRead.Sheets[sheetNameArr];
 
-  const carrencyTotalPriceColumn = findColumnByName(sheetArr, "Total Price");
-  const carrencyNameColumn = findColumnByName(sheetArr, "Invoice Currency");
+  const currencyTotalPriceColumn = findColumnByName(sheetNew, "Total Price");
+  const currencyNameColumn = findColumnByName(sheetNew, "Invoice Currency");
 
   const allCurrencyValue = new Set();
-  for (const cellAddress in sheetArr) {
+  for (const cellAddress in sheetNew) {
     if (
-      cellAddress.startsWith(carrencyNameColumn) &&
-      sheetArr.hasOwnProperty(cellAddress)
+      cellAddress.startsWith(currencyNameColumn) &&
+      sheetNew.hasOwnProperty(cellAddress)
     ) {
-      const cellValue = sheetArr[cellAddress].v;
+      const cellValue = sheetNew[cellAddress].v;
       allCurrencyValue.add(cellValue);
     }
   }
-  const currencyArr = Array.from(allCurrencyValue);
 
-  const totalCarrencySum = currencyArr.map((currency) => {
-    const sum = [];
-    for (let i = 1; i <= invoices.length; i++) {
-      const currencyCellIndex = `${carrencyNameColumn + i}`;
-      const totalPriceCellIndex = `${carrencyTotalPriceColumn + i}`;
-
-      if (
-        sheetArr[currencyCellIndex] &&
-        sheetArr[currencyCellIndex].v.toLowerCase() ===
-          currency.toLowerCase() &&
-        sheetArr[totalPriceCellIndex] &&
-        sheetArr[totalPriceCellIndex].t === "n"
-      ) {
-        sum.push(sheetArr[totalPriceCellIndex].v);
-      }
-    }
-    return sum;
-  });
-
-  const sumArrays = totalCarrencySum.map((innerArray) => {
-    return innerArray.reduce((sum, value) => sum + value, 0);
-  });
-
-  const resultObject = {};
-  currencyArr.forEach((currency, index) => {
-    resultObject[currency] = sumArrays[index];
-  });
-
-  const convertILS = {};
-  let valueILS = 0;
-
-  const ratesArrTotal = ratesArr;
-
-  for (const resultKey in resultObject) {
-    if (
-      resultObject.hasOwnProperty(resultKey) &&
-      resultKey !== "Invoice Currency"
-    ) {
-      for (let i = 0; i < ratesArrTotal.length; i += 2) {
-        const rateKey = ratesArrTotal[i];
-        const rate = ratesArrTotal[i + 1];
-
-        if (rateKey.includes(resultKey)) {
-          convertILS[resultKey] = resultObject[resultKey] * rate;
-          break;
-        }
-      }
-    }
-
-    valueILS =
-      Object.values(convertILS).reduce((sum, value) => sum + value, 0) +
-      resultObject.ILS;
-  }
-
-  const valueConvert = ratesArr.map((value, index) =>
-    index % 2 === 1 ? value * valueILS : value
+  const valueConvert = totalSumsInvoice(
+    currencyTotalPriceColumn,
+    currencyNameColumn,
+    ratesArr,
+    allCurrencyValue,
+    invoices,
+    sheetNew
   );
-
-  const modifiedValueConvert = valueConvert.map((value, index) => {
-    if (index % 2 === 0 && typeof value === "string") {
-      return value.replace("Rate", "");
-    }
-    return value;
-  });
 
   const tempDir = path.join("./", __dirname, "../../", "temp");
   fs.readdir(tempDir, (err, files) => {
@@ -191,36 +114,12 @@ router.post("/", async (req, res) => {
     });
   });
 
-  const invoicesNew = Object.keys(sheetArr).reduce((indices, key) => {
-    const item = sheetArr[key];
-    if (
-      (item.t === "s" && item.v.includes("Ready")) |
-      (item.t === "s" && item.v.includes("INV"))
-    ) {
-      const number = parseInt(key.slice(1), 10);
-      indices.push(number);
-    }
-    return indices;
-  }, []);
+  const invoicesNew = createInvoices(sheetNew);
 
   let invoicesDataNew = [];
+  invoicesDataNew.push(invoicesHeader);
 
-  invoicesDataNew.push([
-    "Customer",
-    "Cust No",
-    "Project Type",
-    "Quantity",
-    "Price Per Item",
-    "Item Price Currency",
-    "Total Price",
-    "Invoice Currency",
-    "Status",
-    "",
-    "",
-    "ValidationErrors",
-  ]);
-
-  const validationErrorsColumn = findColumnByName(sheetArr, "ValidationErrors");
+  const validationErrorsColumn = findColumnByName(sheetNew, "ValidationErrors");
 
   invoicesNew.forEach((rowNumber) => {
     const range = [];
@@ -230,44 +129,12 @@ router.post("/", async (req, res) => {
       range.push(cell);
     }
     const rowData = range.reduce((data, cell) => {
-      if (sheetArr[cell] && sheetArr[cell].v !== undefined) {
-        data[cell] = sheetArr[cell].v;
+      if (sheetNew[cell] && sheetNew[cell].v !== undefined) {
+        data[cell] = sheetNew[cell].v;
       } else {
         data[cell] = null;
         const letter = cell.charAt(0);
-
-        let letterErr = "";
-        switch (letter) {
-          case "A":
-            letterErr = "Fill in customer";
-            break;
-          case "B":
-            letterErr = "Fill in cust no";
-            break;
-          case "C":
-            letterErr = "Fill in project type";
-            break;
-          case "D":
-            letterErr = "Fill in quantity";
-            break;
-          case "E":
-            letterErr = "Fill in price per item";
-            break;
-          case "F":
-            letterErr = "Fill in item price currency";
-            break;
-          case "G":
-            letterErr = "Fill in total price";
-            break;
-          case "H":
-            letterErr = "Fill in invoice currency";
-            break;
-          case "I":
-            letterErr = "Fill in status";
-            break;
-          default:
-            letterErr = null;
-        }
+        const letterErr = errorsChoice(letter);
 
         if (letterErr !== null) {
           mistakes.push(letterErr);
@@ -276,7 +143,7 @@ router.post("/", async (req, res) => {
 
       const number = parseInt(cell.slice(1), 10);
       const key = validationErrorsColumn + number;
-      sheetArr[key] = { v: mistakes.join(", ") };
+      sheetNew[key] = { v: mistakes.join(", ") };
       return data;
     }, {});
 
@@ -299,7 +166,7 @@ router.post("/", async (req, res) => {
       InvoicingMonth: dates[0].v,
       currencyRates: convertToCurrencyRates(ratesArr),
       invoicesData: [XLSX.utils.sheet_to_html(sheetArrNew)],
-      GeneralTotalPrice: convertToCurrencyRates(modifiedValueConvert),
+      GeneralTotalPrice: convertToCurrencyRates(valueConvert),
     },
     null,
     2
