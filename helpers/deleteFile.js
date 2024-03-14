@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 
 export const deleteFile = (tempDir) => {
   fs.readdir(tempDir, (err, files) => {
